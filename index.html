@@ -2,11 +2,14 @@
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RA Duty Pick · Residence Life</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f7f8f4;color:#173e36;font:16px "DM Sans",system-ui,sans-serif}header{background:#143f36;color:white;padding:18px max(5vw,20px);font-weight:650;letter-spacing:.05em}header span{display:inline-grid;place-items:center;border:1px solid #a5c4b7;border-radius:6px;padding:4px 6px;margin-right:12px;font:700 14px Georgia}main{max-width:1220px;margin:auto;padding:44px 5vw}h1,h2,h3{font-family:Georgia,serif;font-weight:normal;margin:0}h1{font-size:clamp(40px,6vw,70px);letter-spacing:-.055em}h2{font-size:30px}h3{font-size:23px}p{line-height:1.5}.row,.actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.spread{justify-content:space-between}.hero{margin-bottom:28px}select,input,button{font:inherit;color:inherit}button,select,input{border:1px solid #bdcac1;background:white;padding:10px 14px;border-radius:7px}button,select,summary{cursor:pointer}button:disabled{opacity:.47;cursor:default}button:focus-visible,select:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid #b16b14;outline-offset:1px}.rules{display:flex;flex-wrap:wrap;gap:10px 30px;padding:15px 0;border-block:1px solid #cfd8cd;font-size:14px}.rules b{margin-right:6px}.top{margin:28px 0 16px}.count{color:#46675b}.months{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:15px}.card{padding:19px 12px;background:#fff;border:1px solid #d3dbd2;border-radius:12px}.card h3{margin:0 0 14px 7px}.grid{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;gap:3px}.grid small{padding:4px 0;color:#65766d}.day{border:0;padding:0;height:38px;background:transparent;font-size:15px;font-variant-numeric:tabular-nums}.weekend{background:#eff2eb}.day[aria-pressed=true],.primary{background:#185542;color:white}.day:hover{box-shadow:inset 0 0 0 1px #527863}footer{margin-top:24px;padding:20px 0;border-top:1px solid #cfd8cd}details{margin-top:18px}summary{width:fit-content}#notice{color:#874317}label{display:inline-flex;gap:7px;align-items:center}input[type=number]{width:96px}@media(max-width:600px){main{padding:28px 14px}.hero{align-items:flex-start;flex-direction:column}.day{height:44px}.rules{gap:6px}.rules span{width:100%}}
+.modes{margin-top:20px}.modes button[aria-pressed=true]{background:#173e36;color:white}.hint{font-size:14px}.day{position:relative;height:44px}.day[data-mark]::after{content:attr(data-mark);display:block;font-size:11px;line-height:12px;font-weight:bold}.day[data-mark="★"]::after{color:#11685a}.day[data-mark="△"]::after{color:#824200}.day[data-mark="×"]::after{color:#993343}.day.chosen{background:#185542;color:white}.day.chosen::after{color:white}.chosen::before{content:'✓';position:absolute;right:2px;top:0;font-size:11px}.holiday{border-bottom:3px solid #758875}
 </style>
 <header><span aria-hidden="true">RL</span>Residence Life</header><main>
 <div class="row spread hero"><h1>RA Duty Pick</h1><div class="row"><select id="season" aria-label="Semester"><option>Spring</option><option>Fall</option></select><input id="year" type="number" min="1900" max="9998" aria-label="Semester year"></div></div>
 <div class="rules"><span><b>Sun–Thu</b>5 PM → 8 AM next day</span><span><b>Fri–Sat</b>5 PM → 5 PM next day</span></div>
-<div class="row spread top"><h2 id="term"></h2><span class="count" id="count" aria-live="polite"></span></div><div class="months" id="months"></div>
+<div class="row modes" aria-label="Calendar mode" role="group"><button id="pickMode" aria-pressed="true">Duty Pick</button><button id="prepMode" aria-pressed="false">Prep</button></div>
+<p id="instruction"></p><div id="prepTools" hidden><label>Mark as <select id="brush"><option value="best">★ Best day</option><option value="hold">△ Likely duty hold</option><option value="avoid">× Avoid</option><option value="">Unmarked</option></select></label><div class="row" id="weekly" aria-label="Apply to every occurrence this semester" role="group"></div></div>
+<p class="hint" id="legend"></p><p class="hint" id="exception"></p><div class="row spread top"><h2 id="term"></h2><span class="count" id="count" aria-live="polite"></span></div><div class="months" id="months"></div>
 <footer><div class="row spread"><div class="actions" id="exports"><button class="primary" data-ext="zip">Download all (.zip)</button><button data-ext="txt">Text list</button><button data-ext="ics">Calendar (.ics)</button><button data-ext="jpg">Semester JPG</button></div><button id="clear">Clear picks</button></div>
 <details><summary>Combine RA schedules</summary><p>For a staff JPG, import each RA’s duty-pick calendar file. Name each file for its RA before importing. Your own picks appear as “My shifts.”</p><input type="file" accept=".ics" multiple id="imports" aria-label="Import RA calendar files"><div id="staff"></div></details>
 <p role="status" id="notice"></p></footer></main>
@@ -22,9 +25,41 @@ const key=d=>[d.getFullYear(),pad(d.getMonth()+1),pad(d.getDate())].join('-');
 const date=s=>new Date(s+'T12:00:00');
 const full=d=>d.toLocaleDateString('en-US',{dateStyle:'full'});
 const weekdays=['Su','Mo','Tu','We','Th','Fr','Sa'];
-let term,start,days,picks,staff;
+let term,start,days,picks,staff,weekly,overrides;
+let preparing=false;
+const marks={best:['★','Best day'],hold:['△','Likely duty hold'],avoid:['×','Avoid']};
+function holiday(d){
+ if(d.getDay()!==0)return '';
+ const monday=new Date(d);monday.setDate(monday.getDate()+1);
+ const n=monday.getDate();
+ if(monday.getMonth()===0 && n>=15 && n<=21)return 'Martin Luther King Jr. Day';
+ if(monday.getMonth()===8 && n<=7)return 'Labor Day';
+ return '';
+}
+function weekend(d){return d.getDay()>=5 || Boolean(holiday(d))}
+function paint(btn,d){
+ const k=key(d), picked=picks.has(k), mark=marks[overrides[k]??weekly[d.getDay()]];
+ btn.classList.toggle('chosen',picked);
+ if(mark)btn.dataset.mark=mark[0];else delete btn.dataset.mark;
+ const description=[full(d),holiday(d),weekend(d)?'5 PM to 5 PM next day':'5 PM to 8 AM next day',mark?.[1],picked?'Picked':''].filter(Boolean).join(', ');
+ btn.title=description;btn.setAttribute('aria-label',description);
+ if(preparing)btn.removeAttribute('aria-pressed');else btn.setAttribute('aria-pressed',picked);
+}
+function renderMode(){
+ el('prepMode').setAttribute('aria-pressed',preparing);el('pickMode').setAttribute('aria-pressed',!preparing);
+ el('prepTools').hidden=!preparing;document.querySelector('footer>.row').hidden=preparing;
+ document.querySelector('footer>.row').style.display=preparing?'none':'';
+ document.querySelector('footer details').hidden=preparing;
+ el('instruction').textContent=preparing?'Choose a mark, then tap a weekday for a repeating preference or a date for an exception.':'Tap a date to pick or release its shift.';
+ el('legend').textContent='✓ Picked　 ★ Best day　 △ Likely duty hold　 × Avoid';
+ for(const btn of document.querySelectorAll('.day'))paint(btn,date(btn.dataset.date));
+ for(const btn of el('weekly').children){const i=Number(btn.dataset.weekday);btn.textContent=weekdays[i]+' '+(marks[weekly[i]]?.[0]||'');btn.title='Every '+days[0][(7+i-days[0][0].getDay())%7].toLocaleDateString('en-US',{weekday:'long'})+' · '+(marks[weekly[i]]?.[1]||'Unmarked');btn.setAttribute('aria-label',btn.title)}
+}
+el('prepMode').onclick=()=>{preparing=true;renderMode()};
+el('pickMode').onclick=()=>{preparing=false;renderMode()};
+weekdays.forEach((w,i)=>{const b=document.createElement('button');b.dataset.weekday=i;b.onclick=()=>{weekly[i]=el('brush').value;save();renderMode()};el('weekly').append(b)});
 function notice(msg){el('notice').textContent=msg}
-function save(){try{localStorage.setItem(prefix+term,JSON.stringify({picks:[...picks],staff}))}catch{notice('Browser storage is unavailable. Download your picks before closing.')}}
+function save(){try{localStorage.setItem(prefix+term,JSON.stringify({picks:[...picks],staff,weekly,overrides}))}catch{notice('Browser storage is unavailable. Download your picks before closing.')}}
 function load(){
  if(!year.value||!year.reportValidity())return;
  term=season.value+' '+year.value;start=season.value==='Fall'?7:0;
@@ -34,13 +69,20 @@ function load(){
  data=JSON.parse(localStorage.getItem(prefix+term))||{}
  }catch{notice('Browser memory could not be read. Download your picks before closing.')}
  picks=new Set(data.picks||[]);staff=data.staff||[];el('term').textContent=term;
+ weekly=data.weekly||{};overrides=data.overrides||{};
+ const special=days.flat().find(d=>holiday(d));el('exception').textContent=full(special)+' · Weekend duty before '+holiday(special)+' (5 PM → 5 PM).';
  el('months').replaceChildren();
  for(const dates of days){const card=document.createElement('section');card.className='card';
  const heading=document.createElement('h3');heading.textContent=dates[0].toLocaleString('en-US',{month:'long'});card.append(heading);
  const grid=document.createElement('div');grid.className='grid';
  for(const w of weekdays){const label=document.createElement('small');label.textContent=w;grid.append(label)}
- for(const d of dates){const k=key(d),btn=document.createElement('button');btn.className='day'+(d.getDay()>=5?' weekend':'');btn.style.gridColumn=String(d.getDay()+1);btn.textContent=d.getDate();btn.setAttribute('aria-label',full(d));btn.setAttribute('aria-pressed',picks.has(k));btn.onclick=()=>{if(picks.has(k))picks.delete(k);else picks.add(k);btn.setAttribute('aria-pressed',picks.has(k));save();refresh()};grid.append(btn)}
- card.append(grid);el('months').append(card)}refresh()
+ for(const d of dates){const k=key(d),btn=document.createElement('button');btn.className='day'+(weekend(d)?' weekend':'')+(holiday(d)?' holiday':'');btn.style.gridColumn=String(d.getDay()+1);btn.dataset.date=k;btn.textContent=d.getDate();
+ btn.onclick=()=>{
+  if(preparing){const value=el('brush').value;if(value===(weekly[d.getDay()]||''))delete overrides[k];else overrides[k]=value}
+  else if(picks.has(k))picks.delete(k);else picks.add(k);
+  save();paint(btn,d);refresh()
+ };grid.append(btn)}
+ card.append(grid);el('months').append(card)}renderMode();refresh()
 }
 function refresh(){
  el('count').textContent=picks.size+' shift'+(picks.size===1?'':'s')+' selected';el('clear').disabled=!picks.size;
@@ -56,7 +98,7 @@ el('imports').onchange=async e=>{const files=[...e.target.files],target=term,val
 };
 function calendar(list){const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Residence Life//Duty Pick//EN','CALSCALE:GREGORIAN'];
  const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
- for(const k of list){const d=date(k),endHour=d.getDay()>=5?'170000':'080000';d.setDate(d.getDate()+1);
+ for(const k of list){const d=date(k),endHour=weekend(d)?'170000':'080000';d.setDate(d.getDate()+1);
  lines.push('BEGIN:VEVENT','UID:'+k+'@ra-duty-pick','DTSTAMP:'+stamp,'DTSTART:'+k.replaceAll('-','')+'T170000','DTEND:'+key(d).replaceAll('-','')+'T'+endHour,'SUMMARY:RA Duty','END:VEVENT')}
  return lines.concat('END:VCALENDAR','').join('\r\n')
 }
@@ -70,7 +112,7 @@ function picture(){const groups=[{name:'My shifts',dates:[...picks]},...staff],c
  days.forEach((dates,i)=>{const x=32+(i%2)*700,y=150+Math.floor(i/2)*block;label(dates[0].toLocaleString('en-US',{month:'long'}),x,y+28,30);
  weekdays.forEach((w,j)=>label(w,x+j*95,y+68,19));
  dates.forEach(d=>{const k=key(d),owners=groups.filter(g=>g.dates.includes(k)),left=x+d.getDay()*95,top=y+80+Math.floor((dates[0].getDay()+d.getDate()-1)/7)*cellH;
- c.fillStyle=owners.length?'#175542':'#eaf0e8';c.fillRect(left,top,91,cellH-4);const ink=owners.length?'white':'#173e36';label(d.getDate(),left+6,top+32,24,80);
+ c.fillStyle=owners.length?'#175542':'#eaf0e8';c.fillRect(left,top,91,cellH-4);const ink=owners.length?'white':'#173e36';label(d.getDate(),left+6,top+32,24,ink,80);if(holiday(d))label('24h',left+48,top+30,16,ink,36);
  owners.forEach((o,n)=>label(o.name,left+5,top+58+n*24,17,ink,81))})});
  return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(Error('Image too large')),'image/jpeg',.94))
 }
